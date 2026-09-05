@@ -59,12 +59,12 @@ diyplay res 1920x1469
 
 ## Status (this machine)
 
-Without BetterDisplay running:
+On an M4 mini + INNOCN 32C1U PBP Phone pane, without using BetterDisplay:
 
 - Switching HiDPI sizes: OK
 - Sleep / wake: OK
 - Unplug / replug: OK
-- Reboot: not signed off yet
+- Reboot: OK — WindowServer restores 2824×2160 physical + 1920×1469 HiDPI from the override alone
 - Forcing HDMI connection mode (the BetterDisplay Pro `connectionMode` lever): **not implemented**. If the OS falls back to 1080p TV timing, diyplay cannot currently push 2824×2160@60 by itself.
 
 ## Warning
