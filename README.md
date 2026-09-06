@@ -59,7 +59,7 @@ diyplay res 1920x1469
 
 ## Status (this machine)
 
-On an M4 mini + INNOCN 32C1U PBP Phone pane, without using BetterDisplay:
+On an M4 mini + INNOCN 32C1U PBP Phone pane, with BetterDisplay uninstalled:
 
 - Switching HiDPI sizes: OK
 - Sleep / wake: OK
