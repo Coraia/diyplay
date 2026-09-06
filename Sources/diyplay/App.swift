@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
 
 private func diyplayOnReconfigure(
@@ -18,13 +19,29 @@ private func diyplayOnReconfigure(
 final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let shared = MenuBarApp()
     private var statusItem: NSStatusItem?
+    private static var lockFd: Int32 = -1
 
     static func run() {
+        guard acquireSingleton() else { exit(0) }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.delegate = shared
         CGDisplayRegisterReconfigurationCallback(diyplayOnReconfigure, nil)
         app.run()
+    }
+
+    /// launchctl bootstrap / double-click must not create a second status item.
+    @discardableResult
+    private static func acquireSingleton() -> Bool {
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("com.coraia.diyplay.lock")
+        let fd = open(path, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return true }
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            return false
+        }
+        lockFd = fd
+        return true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -260,23 +277,12 @@ enum LoginItem {
             withIntermediateDirectories: true
         )
         try? plist.write(to: plistURL, atomically: true, encoding: .utf8)
-        let uid = getuid()
-        let domain = "gui/\(uid)"
-        launchctl(["bootout", "\(domain)/com.coraia.diyplay"])
-        launchctl(["bootstrap", domain, plistURL.path])
+        // Do not `launchctl bootstrap`: RunAtLoad would spawn a second instance
+        // and a second menu-bar icon. Login loads ~/Library/LaunchAgents next time.
     }
 
     private static func disable() {
-        let uid = getuid()
-        launchctl(["bootout", "gui/\(uid)/com.coraia.diyplay"])
+        // Do not `bootout`: if launchd started us, that would quit this process.
         try? FileManager.default.removeItem(at: plistURL)
-    }
-
-    private static func launchctl(_ args: [String]) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        p.arguments = args
-        try? p.run()
-        p.waitUntilExit()
     }
 }
