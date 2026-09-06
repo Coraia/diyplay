@@ -1,5 +1,7 @@
 # diyplay
 
+<p align="center"><img src="app/AppIcon-1024.png" width="128" alt="Diyplay icon"></p>
+
 A tiny macOS menu-bar app that does the one BetterDisplay job that actually matters for many setups:
 
 1. **Identify** the connected display (name, vendor/product, current pixels)
@@ -41,7 +43,7 @@ If you change the monitor OSD (for example PBP Phone → 1:1), change **physical
 macOS 14+, Xcode / Swift 6 toolchain.
 
 ```bash
-git clone https://github.com/<you>/diyplay.git
+git clone https://github.com/fisherever/diyplay.git
 cd diyplay
 make install
 ```

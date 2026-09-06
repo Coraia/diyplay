@@ -13,6 +13,8 @@ app: build
 	mkdir -p dist/Diyplay.app/Contents/MacOS
 	cp .build/release/diyplay dist/Diyplay.app/Contents/MacOS/diyplay
 	cp app/Info.plist dist/Diyplay.app/Contents/Info.plist
+	mkdir -p dist/Diyplay.app/Contents/Resources
+	cp app/AppIcon.icns dist/Diyplay.app/Contents/Resources/AppIcon.icns
 
 install: app
 	mkdir -p "$(PREFIX)"
