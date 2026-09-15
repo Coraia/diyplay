@@ -4,8 +4,8 @@ import Foundation
 struct Main {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
-        if args.isEmpty || args.first == "app" {
-            MenuBarApp.run()
+        if args.isEmpty || args.first == "app" || args.first == "--background" {
+            MenuBarApp.run(background: args.contains("--background"))
             return
         }
         CLI.run(args)
@@ -70,7 +70,7 @@ enum CLI {
         print("""
         diyplay — 菜单栏显示工具（识别显示器 + 物理分辨率 + HiDPI）
 
-        不带参数：菜单栏。Omarchy 无关。
+        不带参数：菜单栏与分辨率面板。--background：仅后台启动。
 
         displays
         status / doctor

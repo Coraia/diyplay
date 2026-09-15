@@ -51,6 +51,12 @@ If you change the monitor OSD (for example PBP Phone → 1:1), change **physical
 
 验证：`swift test` 检查两款手机的比例适配。先退出已运行的 Diyplay，再执行 `DIYPLAY_LIVE_DISPLAY_TEST=1 swift test`，可实测竖屏、重复选择、自动修复不覆盖竖屏、通过“日常”退出及物理 override 保持不变；测试结束会恢复原分辨率。
 
+### 手机上找不到菜单栏图标时
+
+在 Spotlight 中搜索并打开 **Diyplay**，会弹出独立的分辨率选择面板。应用已经运行时，再次打开会唤起同一个面板，不会增加菜单栏图标。面板提供“手机远程”和原有显示大小档位，选择“日常”等档位即可退出竖屏。
+
+菜单栏中也可选择 **分辨率面板…** 打开它。关闭面板不改变当前分辨率；登录时启动仍在后台运行。
+
 ## Install
 
 macOS 14+, Xcode / Swift 6 toolchain.

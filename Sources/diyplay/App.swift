@@ -19,13 +19,27 @@ private func diyplayOnReconfigure(
 final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let shared = MenuBarApp()
     private var statusItem: NSStatusItem?
+    private var resolutionPanel: ResolutionPanelController?
+    private var launchInBackground = false
     private static var lockFd: Int32 = -1
+    private static let panelRequest = Notification.Name("com.coraia.diyplay.show-resolution-panel")
 
-    static func run() {
-        guard acquireSingleton() else { exit(0) }
+    static func run(background: Bool = false) {
+        guard acquireSingleton() else {
+            // A second copy may be launched instead of receiving a reopen
+            // event, especially when the resident app came from a LaunchAgent.
+            if !background {
+                DistributedNotificationCenter.default().postNotificationName(panelRequest, object: nil, userInfo: nil,
+                                                                             deliverImmediately: true)
+            }
+            exit(0)
+        }
+        shared.launchInBackground = background
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.delegate = shared
+        DistributedNotificationCenter.default().addObserver(shared, selector: #selector(panelRequested(_:)),
+                                                             name: panelRequest, object: nil)
         CGDisplayRegisterReconfigurationCallback(diyplayOnReconfigure, nil)
         app.run()
     }
@@ -45,6 +59,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LoginItem.ensureBackgroundLaunch()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.toolTip = "diyplay"
         let menu = NSMenu()
@@ -55,6 +70,28 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshIcon()
     }
 
+    // Finder and Spotlight send a reopen event to the existing process. Keep
+    // the singleton and present a window even when its status item is hidden.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showResolutionPanel()
+        return false
+    }
+
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        guard !launchInBackground else { return false }
+        // Defer until launch has finished and the display configuration settles.
+        DispatchQueue.main.async { self.showResolutionPanel() }
+        return true
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        !launchInBackground
+    }
+
+    @objc private func panelRequested(_ notification: Notification) {
+        DispatchQueue.main.async { self.showResolutionPanel() }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         rebuild(menu)
     }
@@ -63,6 +100,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let ok = DisplayControl.snapshot()?.healthy ?? false
         let name = PhoneRemote.shared.isActive ? "iphone" : (ok ? "display" : "exclamationmark.triangle.fill")
         statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "diyplay")
+        if resolutionPanel?.window?.isVisible == true { updateResolutionPanel() }
     }
 
     private func rebuild(_ menu: NSMenu) {
@@ -114,27 +152,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(custom)
         menu.addItem(.separator())
 
-        let phoneRemote = NSMenuItem(title: PhoneRemote.title, action: #selector(pickPhoneRemote), keyEquivalent: "")
-        phoneRemote.target = self
-        phoneRemote.state = PhoneRemote.shared.isActive ? .on : .off
-        phoneRemote.toolTip = "适合 iPhone 15 / Xiaomi 14 竖屏查看；选择下方任一分辨率可返回普通桌面。"
-        menu.addItem(phoneRemote)
-
-        for step in snap.slider {
-            let item = NSMenuItem(
-                title: "\(step.label)    \(step.w)×\(step.h)",
-                action: #selector(pick(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = "\(step.w)x\(step.h)"
-            if !PhoneRemote.shared.isActive, snap.ui?.pointsW == step.w, snap.ui?.pointsH == step.h {
-                item.state = .on
-            }
-            menu.addItem(item)
-        }
+        for item in resolutionItems(for: snap) { menu.addItem(item) }
 
         menu.addItem(.separator())
+        let panel = NSMenuItem(title: "分辨率面板…", action: #selector(showResolutionPanel), keyEquivalent: "")
+        panel.target = self
+        menu.addItem(panel)
         let fix = NSMenuItem(
             title: snap.healthy ? "重新应用" : "修复",
             action: #selector(fixNow),
@@ -152,6 +175,52 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quit = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    /// Both entry points use the same items, selection state, and actions.
+    private func resolutionItems(for snap: Snapshot) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        let phoneRemote = NSMenuItem(title: PhoneRemote.title, action: #selector(pickPhoneRemote), keyEquivalent: "")
+        phoneRemote.target = self
+        phoneRemote.state = PhoneRemote.shared.isActive ? .on : .off
+        phoneRemote.toolTip = "适合 iPhone 15 / Xiaomi 14 竖屏查看；选择下方任一分辨率可返回普通桌面。"
+        items.append(phoneRemote)
+
+        for step in snap.slider {
+            let item = NSMenuItem(
+                title: "\(step.label)    \(step.w)×\(step.h)",
+                action: #selector(pick(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = "\(step.w)x\(step.h)"
+            if !PhoneRemote.shared.isActive, snap.ui?.pointsW == step.w, snap.ui?.pointsH == step.h {
+                item.state = .on
+            }
+            items.append(item)
+        }
+        return items
+    }
+
+    @objc func showResolutionPanel() {
+        if resolutionPanel == nil {
+            resolutionPanel = ResolutionPanelController { [weak self] item in
+                guard let self, !PhoneRemote.shared.isChanging, let action = item.action else { return }
+                NSApp.sendAction(action, to: self, from: item)
+            }
+        }
+        updateResolutionPanel()
+        resolutionPanel?.present()
+    }
+
+    private func updateResolutionPanel() {
+        let snap = DisplayControl.snapshot()
+        let current = snap?.ui.map { "当前 \($0.pointsW)×\($0.pointsH)" } ?? "当前分辨率不可用"
+        resolutionPanel?.update(
+            status: snap.map { "\($0.display.name) · \(current)" } ?? "没有显示器",
+            items: snap.map(resolutionItems) ?? [],
+            isChanging: PhoneRemote.shared.isChanging
+        )
     }
 
     private func headerTitle(_ snap: Snapshot) -> String {
@@ -286,6 +355,19 @@ enum LoginItem {
         set { newValue ? enable() : disable() }
     }
 
+    /// Upgrade our existing one-argument LaunchAgent without changing other
+    /// settings or reloading it (which would start a second app instance).
+    static func ensureBackgroundLaunch(at url: URL = plistURL, executable: String = executable) {
+        guard let data = try? Data(contentsOf: url),
+              var plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
+              plist["Label"] as? String == "com.coraia.diyplay",
+              plist["ProgramArguments"] as? [String] == [executable]
+        else { return }
+        plist["ProgramArguments"] = [executable, "--background"]
+        guard let updated = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) else { return }
+        try? updated.write(to: url, options: .atomic)
+    }
+
     private static func enable() {
         let exe = executable
         let plist = """
@@ -298,6 +380,7 @@ enum LoginItem {
           <key>ProgramArguments</key>
           <array>
             <string>\(exe)</string>
+            <string>--background</string>
           </array>
           <key>RunAtLoad</key>
           <true/>

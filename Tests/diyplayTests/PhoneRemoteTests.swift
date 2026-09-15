@@ -30,6 +30,7 @@ final class PhoneRemoteTests: XCTestCase {
         let initialOverride = try? Data(contentsOf: overrideURL)
         let initialDefaults = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix("diyplay.") }
         defer {
+            NSApp.windows.filter { $0.title == ResolutionPanelController.windowTitle }.forEach { $0.close() }
             try? PhoneRemote.shared.restore()
             try? DisplayControl.apply(looksLike: (initial.pointsW, initial.pointsH))
             for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("diyplay.") {
@@ -60,7 +61,21 @@ final class PhoneRemoteTests: XCTestCase {
         let native = DisplayControl.selectedNative(display)
         let daily = DisplayControl.daily(from: DisplayControl.slider(for: display, native: native,
                                                                     presetId: DisplayControl.resolvedPreset(display)?.id), native: native)
-        try DisplayControl.apply(looksLike: daily)
+        // Reopening from Finder / Spotlight exposes the same choices without
+        // creating another window or changing the current portrait resolution.
+        XCTAssertFalse(MenuBarApp.shared.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        let panel = try XCTUnwrap(NSApp.windows.first { $0.title == ResolutionPanelController.windowTitle })
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertLessThanOrEqual(panel.frame.width, 720)
+        XCTAssertFalse(MenuBarApp.shared.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
+        XCTAssertEqual(NSApp.windows.filter { $0.title == ResolutionPanelController.windowTitle }.count, 1)
+        XCTAssertEqual(DisplayControl.currentUI()?.pointsW, 720)
+        panel.close()
+        XCTAssertTrue(PhoneRemote.shared.isActive, "Closing the panel must not leave portrait mode")
+        XCTAssertFalse(MenuBarApp.shared.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertTrue(panel.isVisible)
+        let dailyButton = try XCTUnwrap(buttons(in: try XCTUnwrap(panel.contentView)).first { $0.title.hasPrefix("日常") })
+        dailyButton.performClick(nil)
         XCTAssertFalse(PhoneRemote.shared.ownsConfiguration)
         XCTAssertEqual(CGMainDisplayID(), initialMain)
         XCTAssertEqual(DisplayControl.currentUI()?.pointsW, daily.w)
@@ -70,6 +85,14 @@ final class PhoneRemoteTests: XCTestCase {
         MenuBarApp.shared.menuNeedsUpdate(menu)
         XCTAssertEqual(menu.items.first { $0.title == PhoneRemote.title }?.state, .off)
         XCTAssertEqual(menu.items.first { $0.title.hasPrefix("日常") }?.state, .on)
-        print("LIVE returned through daily: \(daily.w)x\(daily.h); physical override unchanged")
+        print("LIVE reopened one panel and returned through its daily button: \(daily.w)x\(daily.h); physical override unchanged")
+    }
+
+    @MainActor
+    private func buttons(in view: NSView) -> [NSButton] {
+        view.subviews.flatMap { child in
+            if let button = child as? NSButton { return [button] }
+            return buttons(in: child)
+        }
     }
 }
