@@ -61,12 +61,16 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refreshIcon() {
         let ok = DisplayControl.snapshot()?.healthy ?? false
-        let name = ok ? "display" : "exclamationmark.triangle.fill"
+        let name = PhoneRemote.shared.isActive ? "iphone" : (ok ? "display" : "exclamationmark.triangle.fill")
         statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "diyplay")
     }
 
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
+        if PhoneRemote.shared.isChanging {
+            menu.addItem(disabled("正在切换分辨率…"))
+            return
+        }
         guard let snap = DisplayControl.snapshot() else {
             menu.addItem(disabled("没有显示器"))
             return
@@ -110,6 +114,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(custom)
         menu.addItem(.separator())
 
+        let phoneRemote = NSMenuItem(title: PhoneRemote.title, action: #selector(pickPhoneRemote), keyEquivalent: "")
+        phoneRemote.target = self
+        phoneRemote.state = PhoneRemote.shared.isActive ? .on : .off
+        phoneRemote.toolTip = "适合 iPhone 15 / Xiaomi 14 竖屏查看；选择下方任一分辨率可返回普通桌面。"
+        menu.addItem(phoneRemote)
+
         for step in snap.slider {
             let item = NSMenuItem(
                 title: "\(step.label)    \(step.w)×\(step.h)",
@@ -118,7 +128,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             item.target = self
             item.representedObject = "\(step.w)x\(step.h)"
-            if snap.ui?.pointsW == step.w, snap.ui?.pointsH == step.h {
+            if !PhoneRemote.shared.isActive, snap.ui?.pointsW == step.w, snap.ui?.pointsH == step.h {
                 item.state = .on
             }
             menu.addItem(item)
@@ -145,6 +155,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func headerTitle(_ snap: Snapshot) -> String {
+        if PhoneRemote.shared.isActive {
+            return "\(snap.display.name)  ·  手机远程"
+        }
         if snap.healthy {
             return "\(snap.display.name)  ·  正常"
         }
@@ -213,6 +226,15 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshIcon()
     }
 
+    @objc private func pickPhoneRemote() {
+        do {
+            try PhoneRemote.shared.enable()
+        } catch {
+            alert(error.localizedDescription)
+        }
+        refreshIcon()
+    }
+
     @objc private func fixNow() {
         do {
             guard let d = DisplayControl.activeDisplay() else { return }
@@ -229,6 +251,16 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        do {
+            try PhoneRemote.shared.restore()
+            return .terminateNow
+        } catch {
+            alert(error.localizedDescription)
+            return .terminateCancel
+        }
     }
 
     private func alert(_ message: String) {

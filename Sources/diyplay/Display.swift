@@ -159,6 +159,7 @@ enum DisplayControl {
 
     static func setNative(_ d: DisplayRecord, width: Int, height: Int, presetId: String?) throws {
         guard width >= 640, height >= 480 else { throw DisplayError.badSize }
+        try PhoneRemote.shared.restore()
         let steps = slider(for: d, native: (width, height), presetId: presetId)
         let ui = daily(from: steps, native: (width, height))
         try OverrideFile.write(
@@ -182,6 +183,7 @@ enum DisplayControl {
     }
 
     static func apply(looksLike: (w: Int, h: Int)) throws {
+        try PhoneRemote.shared.restore()
         guard let display = mainExternalDisplay() else { throw DisplayError.noDisplay }
         guard let mode = findMode(display: display, pointsW: looksLike.w, pointsH: looksLike.h) else {
             throw DisplayError.noMode(looksLike.w, looksLike.h)
@@ -204,6 +206,7 @@ enum DisplayControl {
     }
 
     static func applyIfNeeded() {
+        guard !PhoneRemote.shared.ownsConfiguration else { return }
         guard let d = activeDisplay() else { return }
         let snap = snapshot()
         let want = preferredUI(d)

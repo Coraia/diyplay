@@ -10,6 +10,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "diyplay",
+            dependencies: ["VirtualDisplaySupport"],
             path: "Sources/diyplay",
             swiftSettings: [
                 .swiftLanguageMode(.v5),
@@ -19,5 +20,11 @@ let package = Package(
                 .linkedFramework("AppKit"),
             ]
         ),
+        .target(
+            name: "VirtualDisplaySupport",
+            cSettings: [.unsafeFlags(["-fobjc-arc"])],
+            linkerSettings: [.linkedFramework("CoreGraphics")]
+        ),
+        .testTarget(name: "diyplayTests", dependencies: ["diyplay"]),
     ]
 )
