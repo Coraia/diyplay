@@ -97,6 +97,10 @@ Writing `DisplayPixelDimensions` is a real display override. A wrong native size
 
 `make install` changes ownership of the system Overrides directory so the app can write. That is a personal-machine tradeoff, not something to run on a managed fleet.
 
+## Handoff
+
+[2026-10-12 项目交接与冷备恢复入口](docs/handoffs/2026-10-12.md)：当前交付、本机保留范围、NAS 恢复方式及验证边界。
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
