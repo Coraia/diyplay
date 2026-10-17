@@ -1,0 +1,30 @@
+{
+  "availableModeCount" : 173,
+  "check" : "Every normal resolution shown by the real menu exists in the target display's CoreGraphics mode table.",
+  "currentLooksLike" : "2560x1440",
+  "display" : {
+    "detectedPhysical" : "3840x2160",
+    "name" : "32C1U",
+    "product" : 65535,
+    "selectedPhysical" : "3840x2160",
+    "vendor" : 9699
+  },
+  "excludedUnavailableModes" : [
+    "3072x1728"
+  ],
+  "offeredNormalModes" : [
+    "1920x1080",
+    "2560x1440",
+    "3840x2160"
+  ],
+  "passed" : true,
+  "proposedNormalModesBeforeSelfCheck" : [
+    "1920x1080",
+    "2560x1440",
+    "3072x1728",
+    "3840x2160"
+  ],
+  "unsupportedOfferedModes" : [
+
+  ]
+}

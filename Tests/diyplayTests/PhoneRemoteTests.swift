@@ -60,7 +60,9 @@ final class PhoneRemoteTests: XCTestCase {
 
         let native = DisplayControl.selectedNative(display)
         let daily = DisplayControl.daily(from: DisplayControl.slider(for: display, native: native,
-                                                                    presetId: DisplayControl.resolvedPreset(display)?.id), native: native)
+                                                                    presetId: DisplayControl.resolvedPreset(display)?.id,
+                                                                    availableLooksLike: DisplayControl.availableLooksLike()),
+                                         native: native)
         // Reopening from Finder / Spotlight exposes the same choices without
         // creating another window or changing the current portrait resolution.
         XCTAssertFalse(MenuBarApp.shared.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))

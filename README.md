@@ -36,7 +36,7 @@ Apple Silicon is the intended target. Tested on an M4 Mac mini + INNOCN 32C1U in
   重新应用    登录时启动    退出
 ```
 
-Other monitors skip the 32C1U presets and get a generic HiDPI ladder from whatever physical size you set.
+Other monitors skip the 32C1U presets and get a generic HiDPI ladder from whatever physical size you set. Diyplay follows the current macOS main display, checks its real CoreGraphics mode table, and hides calculated choices that the display does not expose instead of failing after selection.
 
 If you change the monitor OSD (for example PBP Phone → 1:1), change **physical resolution** in diyplay to match. Then sleep or unplug HDMI once if the HiDPI list does not update.
 

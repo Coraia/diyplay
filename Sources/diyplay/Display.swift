@@ -107,15 +107,32 @@ enum DisplayControl {
 
     static func activeDisplay() -> DisplayRecord? {
         let all = listDisplays()
-        if let match = all.first(where: { $0.name == "32C1U" }) { return match }
-        return all.first
+        guard let display = mainExternalDisplay() else { return all.first }
+        return selectActiveDisplay(
+            from: all,
+            mainVendor: Int(CGDisplayVendorNumber(display)),
+            mainProduct: Int(CGDisplayModelNumber(display))
+        )
+    }
+
+    static func selectActiveDisplay(
+        from displays: [DisplayRecord],
+        mainVendor: Int,
+        mainProduct: Int
+    ) -> DisplayRecord? {
+        displays.first { $0.vendor == mainVendor && $0.product == mainProduct } ?? displays.first
     }
 
     static func snapshot() -> Snapshot? {
         guard let d = activeDisplay() else { return nil }
         let native = selectedNative(d)
         let preset = resolvedPreset(d)
-        let slider = slider(for: d, native: native, presetId: preset?.id)
+        let slider = slider(
+            for: d,
+            native: native,
+            presetId: preset?.id,
+            availableLooksLike: availableLooksLike()
+        )
         return Snapshot(
             display: d,
             native: native,
@@ -150,10 +167,16 @@ enum DisplayControl {
 
     static func preferredUI(_ d: DisplayRecord) -> (w: Int, h: Int) {
         let native = selectedNative(d)
-        let steps = slider(for: d, native: native, presetId: resolvedPreset(d)?.id)
+        let steps = slider(
+            for: d,
+            native: native,
+            presetId: resolvedPreset(d)?.id,
+            availableLooksLike: availableLooksLike()
+        )
         let w = UserDefaults.standard.integer(forKey: uiWKey + d.key)
         let h = UserDefaults.standard.integer(forKey: uiHKey + d.key)
         if steps.contains(where: { $0.w == w && $0.h == h }) { return (w, h) }
+        if steps.isEmpty, let current = currentUI() { return (current.pointsW, current.pointsH) }
         return daily(from: steps, native: native)
     }
 
@@ -217,14 +240,35 @@ enum DisplayControl {
         try? apply(looksLike: want)
     }
 
-    static func slider(for d: DisplayRecord, native: (w: Int, h: Int), presetId: String?) -> [(w: Int, h: Int, label: String)] {
+    static func slider(
+        for d: DisplayRecord,
+        native: (w: Int, h: Int),
+        presetId: String?,
+        availableLooksLike: Set<String>? = nil
+    ) -> [(w: Int, h: Int, label: String)] {
+        let proposed: [(w: Int, h: Int, label: String)]
         if let presetId,
            let preset = PresetBank.presets(vendor: d.vendor, product: d.product).first(where: { $0.id == presetId }),
            preset.width == native.w, preset.height == native.h
         {
-            return preset.resolvedSlider
+            proposed = preset.resolvedSlider
+        } else {
+            proposed = Ladder.hidpi(nativeW: native.w, nativeH: native.h)
         }
-        return Ladder.hidpi(nativeW: native.w, nativeH: native.h)
+        guard let availableLooksLike else { return proposed }
+        var compatible = proposed.filter { availableLooksLike.contains("\($0.w)x\($0.h)") }
+        guard !compatible.isEmpty, !compatible.contains(where: { $0.label == "日常" }) else {
+            return compatible
+        }
+
+        let target = daily(from: proposed, native: native)
+        let nearest = compatible.indices.min { left, right in
+            let leftDistance = abs(compatible[left].w - target.w) + abs(compatible[left].h - target.h)
+            let rightDistance = abs(compatible[right].w - target.w) + abs(compatible[right].h - target.h)
+            return leftDistance < rightDistance
+        }
+        if let nearest { compatible[nearest].label = "日常" }
+        return compatible
     }
 
     static func daily(from steps: [(w: Int, h: Int, label: String)], native: (w: Int, h: Int)) -> (w: Int, h: Int) {
@@ -235,6 +279,7 @@ enum DisplayControl {
     }
 
     static func mainExternalDisplay() -> CGDirectDisplayID? {
+        if let normal = PhoneRemote.shared.normalDisplayID { return normal }
         var n: UInt32 = 0
         CGGetOnlineDisplayList(16, nil, &n)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
@@ -248,6 +293,17 @@ enum DisplayControl {
         guard let display = mainExternalDisplay() else { return nil }
         guard let ref = CGDisplayCopyDisplayMode(display) else { return nil }
         return describe(ref)
+    }
+
+    static func availableLooksLike() -> Set<String> {
+        PhoneRemote.shared.normalAvailableLooksLike ?? availableLooksLike(display: mainExternalDisplay())
+    }
+
+    static func availableLooksLike(display: CGDirectDisplayID?) -> Set<String> {
+        guard let display else { return [] }
+        let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue!] as CFDictionary
+        guard let all = CGDisplayCopyAllDisplayModes(display, opts) as? [CGDisplayMode] else { return [] }
+        return Set(all.map { "\(Int($0.width))x\(Int($0.height))" })
     }
 
     static func findMode(display: CGDirectDisplayID, pointsW: Int, pointsH: Int) -> UIMode? {

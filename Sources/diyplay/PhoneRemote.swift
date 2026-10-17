@@ -20,10 +20,18 @@ final class PhoneRemote {
 
     private var virtual: DPVirtualDisplay?
     private var saved: [SavedDisplay] = []
+    private var normalDisplay: CGDirectDisplayID?
+    private var normalModes: Set<String>?
     private(set) var isChanging = false
 
     var isActive: Bool { virtual != nil }
     var ownsConfiguration: Bool { isChanging || isActive || !saved.isEmpty }
+    var normalDisplayID: CGDirectDisplayID? {
+        ownsConfiguration ? normalDisplay : nil
+    }
+    var normalAvailableLooksLike: Set<String>? {
+        ownsConfiguration ? normalModes : nil
+    }
 
     func enable() throws {
         guard !isActive else { return }
@@ -34,6 +42,8 @@ final class PhoneRemote {
             return SavedDisplay(id: id, mode: mode, origin: CGDisplayBounds(id).origin,
                                 mirror: CGDisplayMirrorsDisplay(id))
         }
+        normalDisplay = physical
+        normalModes = DisplayControl.availableLooksLike(display: physical)
         isChanging = true
         defer { isChanging = false }
         do {
@@ -108,6 +118,8 @@ final class PhoneRemote {
             }
         }
         saved = []
+        normalDisplay = nil
+        normalModes = nil
     }
 
     private static func onlineDisplays() throws -> [CGDirectDisplayID] {
