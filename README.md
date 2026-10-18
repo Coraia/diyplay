@@ -8,6 +8,7 @@ A tiny macOS menu-bar app that does the one BetterDisplay job that actually matt
 2. **Set physical resolution** when EDID is lying (PBP, TVs, cropped panes)
 3. **Offer HiDPI sizes** derived from that physical size
 4. **手机远程**: switch the desktop to a phone-shaped portrait resolution
+5. **远程伴侣**: ask before switching when UU Remote comes to the foreground
 
 Not affiliated with [BetterDisplay](https://github.com/waydabber/BetterDisplay). No XDR, DDC, PIP, or connection-mode matrix. A temporary virtual display is used only for the phone-remote preset.
 
@@ -33,6 +34,9 @@ Apple Silicon is the intended target. Tested on an M4 Mac mini + INNOCN 32C1U in
   手机远程     720×1560（竖屏）
   更锐 / 日常 / …
 ────────────────
+  ✓ UU 远程伴侣（打开时询问）
+  启动 UU 并进入手机场景
+────────────────
   重新应用    登录时启动    退出
 ```
 
@@ -50,6 +54,14 @@ If you change the monitor OSD (for example PBP Phone → 1:1), change **physical
 - 此模式使用 macOS 私有 `CGVirtualDisplay` 接口。实际切换失败时会尝试恢复原设置并显示错误。已通过 UU 手机端实测；如果 UU 选中了另一个显示源，可选“Diyplay 手机远程”。
 
 验证：`swift test` 检查两款手机的比例适配。先退出已运行的 Diyplay，再执行 `DIYPLAY_LIVE_DISPLAY_TEST=1 swift test`，可实测竖屏、重复选择、自动修复不覆盖竖屏、通过“日常”退出及物理 override 保持不变；测试结束会恢复原分辨率。
+
+### UU 远程伴侣
+
+“UU 远程伴侣（打开时询问）”默认启用。把 UU 远程切到前台时，Diyplay 会显示一个不抢焦点的提示，可选择切换到 720×1560 手机竖屏或保持当前分辨率；选择保持后 15 分钟内不会重复提示。已经处于手机远程模式时不提示。
+
+“启动 UU 并进入手机场景”是确定性入口：先完成竖屏切换，再打开 UU 远程。伴侣只监听 UU 主应用的前台激活，不用其常驻进程、网络连接、私有 XPC 或专有日志猜测手机会话状态。
+
+本机 E2E 证据见 [`docs/evidence/2026-10-18-uu-companion-e2e.json`](docs/evidence/2026-10-18-uu-companion-e2e.json)：真实激活 UU、提示与冷却、保持当前、720×1560 切换及恢复均已验证。
 
 ### 手机上找不到菜单栏图标时
 

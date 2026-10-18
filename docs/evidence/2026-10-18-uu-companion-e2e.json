@@ -1,0 +1,48 @@
+{
+  "version": "0.3.0",
+  "build": 5,
+  "date": "2026-10-18",
+  "trigger": {
+    "application": "UU Remote",
+    "bundleIdentifier": "com.netease.uuremote",
+    "signal": "NSWorkspace foreground activation",
+    "actualApplicationActivated": true
+  },
+  "prompt": {
+    "windowTitle": "Diyplay · 远程伴侣",
+    "message": "要切换到手机远程场景吗？",
+    "actions": [
+      "保持当前",
+      "切换"
+    ],
+    "displayed": true,
+    "screenshot": "docs/evidence/2026-10-18-uu-companion-prompt.png"
+  },
+  "keepCurrentPath": {
+    "selected": true,
+    "beforeLooksLike": "2560x1440",
+    "afterLooksLike": "2560x1440",
+    "promptRepeatedWithinCooldown": false,
+    "passed": true
+  },
+  "phoneDisplayPath": {
+    "command": "DIYPLAY_LIVE_DISPLAY_TEST=1 swift test --filter PhoneRemoteTests/testLivePortraitAndReturnThroughNormalResolution",
+    "portraitLooksLike": "720x1560",
+    "portraitBackingPixels": "1440x3120",
+    "refreshRateHz": 60,
+    "restoredLooksLike": "2560x1440",
+    "physicalOverrideUnchanged": true,
+    "passed": true
+  },
+  "displaySelfCheck": {
+    "artifact": "docs/evidence/2026-10-18-display-self-check.json",
+    "unsupportedOfferedModes": [],
+    "passed": true
+  },
+  "firstAttemptAndRepair": {
+    "observation": "Reopening Diyplay while the companion prompt was present could replace it with the resolution panel.",
+    "repair": "Track the prompt's presented state explicitly and bring it forward on reopen.",
+    "finalResult": "The companion prompt remained the visible Diyplay window during the final activation check."
+  },
+  "boundary": "This release detects the supported UU app foreground event. It does not infer a phone peer connection from UU processes, sockets, private XPC, or proprietary logs."
+}

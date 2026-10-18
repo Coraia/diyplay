@@ -20,6 +20,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let shared = MenuBarApp()
     private var statusItem: NSStatusItem?
     private var resolutionPanel: ResolutionPanelController?
+    private var companionPrompt: CompanionPromptController?
     private var launchInBackground = false
     private static var lockFd: Int32 = -1
     private static let panelRequest = Notification.Name("com.coraia.diyplay.show-resolution-panel")
@@ -66,6 +67,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         statusItem = item
+        RemoteCompanion.shared.start { [weak self] in self?.showCompanionPrompt() }
         DisplayControl.applyIfNeeded()
         refreshIcon()
     }
@@ -73,7 +75,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Finder and Spotlight send a reopen event to the existing process. Keep
     // the singleton and present a window even when its status item is hidden.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showResolutionPanel()
+        if companionPrompt?.isVisible == true {
+            companionPrompt?.bringForward()
+        } else {
+            showResolutionPanel()
+        }
         return false
     }
 
@@ -89,7 +95,13 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func panelRequested(_ notification: Notification) {
-        DispatchQueue.main.async { self.showResolutionPanel() }
+        DispatchQueue.main.async {
+            if self.companionPrompt?.isVisible == true {
+                self.companionPrompt?.bringForward()
+            } else {
+                self.showResolutionPanel()
+            }
+        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -153,6 +165,26 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         for item in resolutionItems(for: snap) { menu.addItem(item) }
+
+        menu.addItem(.separator())
+        let companion = NSMenuItem(
+            title: "UU 远程伴侣（打开时询问）",
+            action: #selector(toggleRemoteCompanion),
+            keyEquivalent: ""
+        )
+        companion.target = self
+        companion.state = RemoteCompanion.shared.isEnabled ? .on : .off
+        menu.addItem(companion)
+
+        let launchUU = NSMenuItem(
+            title: "启动 UU 并进入手机场景",
+            action: #selector(openUUInPhoneMode),
+            keyEquivalent: ""
+        )
+        launchUU.target = self
+        launchUU.isEnabled = RemoteCompanion.shared.uuApplicationURL != nil
+        launchUU.toolTip = "先切换到 720×1560 手机竖屏，再打开 UU 远程。"
+        menu.addItem(launchUU)
 
         menu.addItem(.separator())
         let panel = NSMenuItem(title: "分辨率面板…", action: #selector(showResolutionPanel), keyEquivalent: "")
@@ -302,6 +334,48 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert(error.localizedDescription)
         }
         refreshIcon()
+    }
+
+    private func showCompanionPrompt() {
+        guard !PhoneRemote.shared.ownsConfiguration, let snap = DisplayControl.snapshot() else { return }
+        if companionPrompt == nil {
+            companionPrompt = CompanionPromptController(
+                onSwitch: { [weak self] in self?.switchToPhoneFromCompanion() },
+                onKeep: {}
+            )
+        }
+        companionPrompt?.present(displayName: snap.display.name)
+    }
+
+    private func switchToPhoneFromCompanion() {
+        do {
+            try PhoneRemote.shared.enable()
+        } catch {
+            alert(error.localizedDescription)
+        }
+        refreshIcon()
+    }
+
+    @objc private func toggleRemoteCompanion() {
+        RemoteCompanion.shared.isEnabled.toggle()
+        if !RemoteCompanion.shared.isEnabled { companionPrompt?.dismiss() }
+    }
+
+    @objc private func openUUInPhoneMode() {
+        guard RemoteCompanion.shared.uuApplicationURL != nil else {
+            alert("没有找到 UU 远程。请先安装后再试。")
+            return
+        }
+        do {
+            try PhoneRemote.shared.enable()
+        } catch {
+            alert(error.localizedDescription)
+            return
+        }
+        refreshIcon()
+        _ = RemoteCompanion.shared.openUU { [weak self] error in
+            if let error { self?.alert("UU 远程启动失败：\(error.localizedDescription)") }
+        }
     }
 
     @objc private func fixNow() {
