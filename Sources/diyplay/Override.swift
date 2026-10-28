@@ -51,7 +51,19 @@ enum OverrideFile {
         )
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            try data.write(to: URL(fileURLWithPath: dest), options: .atomic)
+            do {
+                try data.write(to: URL(fileURLWithPath: dest), options: .atomic)
+            } catch {
+                // The vendor directory is normally root-owned while the plist
+                // itself belongs to the installing user, so an atomic write
+                // (new temp file in that directory) fails. Rewrite the
+                // existing file in place instead of demanding sudo again.
+                guard FileManager.default.isWritableFile(atPath: dest) else { throw error }
+                let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: dest))
+                defer { try? handle.close() }
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: data)
+            }
         } catch {
             throw DisplayError.overrideNotWritable
         }
@@ -94,6 +106,10 @@ struct NativePreset: Equatable {
     var width: Int
     var height: Int
     var slider: [(w: Int, h: Int, label: String)]?
+    /// Menu-only rows: real modes macOS already exposes that are NOT written
+    /// into the override. 1× sizes live here, because writing them as HiDPI
+    /// scale-resolutions is what makes macOS drop the whole mode table.
+    var extras: [(w: Int, h: Int, label: String)] = []
 
     var size: (w: Int, h: Int) { (width, height) }
 
@@ -129,7 +145,10 @@ enum PresetBank {
                     height: 2160,
                     slider: [
                         (960, 1080, "更锐"),
-                        (1536, 1728, "日常"),
+                        (1024, 1152, "偏锐"),
+                    ],
+                    extras: [
+                        (1600, 1800, "日常"),
                         (1920, 2160, "最大"),
                     ]
                 ),

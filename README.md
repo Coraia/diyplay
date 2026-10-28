@@ -7,10 +7,11 @@ A tiny macOS menu-bar app that does the one BetterDisplay job that actually matt
 1. **Identify** the connected display (name, vendor/product, current pixels)
 2. **Set physical resolution** when EDID is lying (PBP, TVs, cropped panes)
 3. **Offer HiDPI sizes** derived from that physical size
-4. **手机远程**: switch the desktop to a phone-shaped portrait resolution
-5. **远程伴侣**: ask before switching when UU Remote comes to the foreground
+4. **虚拟屏 HiDPI**: intermediate HiDPI sizes the panel cannot offer, by rendering on a 2× virtual display and mirroring it onto the pane
+5. **手机远程**: switch the desktop to a phone-shaped portrait resolution
+6. **远程伴侣**: ask before switching when UU Remote comes to the foreground
 
-Not affiliated with [BetterDisplay](https://github.com/waydabber/BetterDisplay). No XDR, DDC, PIP, or connection-mode matrix. A temporary virtual display is used only for the phone-remote preset.
+Not affiliated with [BetterDisplay](https://github.com/waydabber/BetterDisplay). No XDR, DDC, PIP, or connection-mode matrix. A temporary virtual display is used for the phone-remote preset and for 虚拟屏 HiDPI.
 
 Apple Silicon is the intended target. Tested on an M4 Mac mini + INNOCN 32C1U in PBP.
 
@@ -107,7 +108,14 @@ On an M4 mini + INNOCN 32C1U PBP Phone pane, with BetterDisplay uninstalled:
 
 Writing `DisplayPixelDimensions` is a real display override. A wrong native size (2560 vs 2824, 2824×1080 vs 2824×2160) looks like a tiny sharp corner or a blurry stretch. Set physical size to the **visible pane**, not the panel’s marketing 4K.
 
-`make install` changes ownership of the system Overrides directory so the app can write. That is a personal-machine tradeoff, not something to run on a managed fleet.
+`make install` changes ownership of the system Overrides directory so the app can write. That is a personal-machine tradeoff, not something to run on a managed set.
+
+## HiDPI 的现实边界（2026-10-28 实测，32C1U 对半 pane）
+
+- 面板在 PBP 对半后只有 1920×2160 像素。macOS 只肯为「2× 后台尺寸 ≤ 面板约 1.07 倍」的尺寸生成 HiDPI：这张 pane 上到 **1024×1152（后台 2048×2304）** 为止，`1280×1440`（后台 2560×2880）、`1536×1728`、`1920×2160`（后台 3840×4320）都不会出现。
+- 所以「字小 + HiDPI」在物理上不存在：**像素严格 1:1 的只有两档**——`1920×2160` 1×（最小字）和 `960×1080`/`1024×1152` 2×（大字）。中间档（`1600×1800`、`1280×1440`）只有 1×，是把画布插值放大到面板，会比两端软。
+- **override 里的 `default-resolution` 会当作模式表上限**：写成比物理尺寸小的值，重连后比它大的模式全部消失（症状是 `1920×2160` 从 `CGDisplayCopyAllDisplayModes` 里不见、最大只剩 1600×1800，然后就切不回 1:1 了）。所以 diyplay 写 override 时固定把 `default-resolution` 设成物理尺寸，日常档位只靠 `apply` 设置，不写进 plist。
+- 菜单里的 1× 档位来自 `NativePreset.extras`，只展示、不写 override；写 override 的只有 HiDPI ladder（`overrideSlider`）。
 
 ## Handoff
 

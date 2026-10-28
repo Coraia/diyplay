@@ -21,6 +21,18 @@ struct UIMode {
     var ref: CGDisplayMode
 }
 
+extension UIMode {
+    /// "1×" or "HiDPI 2×" — what the menu and CLI show for one mode.
+    var scaleText: String {
+        guard hidpi, pointsW > 0, pixelsW / pointsW >= 2 else { return "1×" }
+        return "HiDPI \(pixelsW / pointsW)×"
+    }
+
+    var detail: String {
+        hidpi ? "\(scaleText)（渲染 \(pixelsW)×\(pixelsH)）" : "1×（非 HiDPI）"
+    }
+}
+
 struct Snapshot {
     var display: DisplayRecord
     var native: (w: Int, h: Int)
@@ -69,6 +81,7 @@ enum DisplayControl {
     private static let presetKey = "diyplay.preset."
     private static let uiWKey = "diyplay.uiW."
     private static let uiHKey = "diyplay.uiH."
+    private static let uiHiDPIKey = "diyplay.uiHiDPI."
 
     static func listDisplays() -> [DisplayRecord] {
         var result: [DisplayRecord] = []
@@ -183,14 +196,21 @@ enum DisplayControl {
     static func setNative(_ d: DisplayRecord, width: Int, height: Int, presetId: String?) throws {
         guard width >= 640, height >= 480 else { throw DisplayError.badSize }
         try PhoneRemote.shared.restore()
-        let steps = slider(for: d, native: (width, height), presetId: presetId)
-        let ui = daily(from: steps, native: (width, height))
+        try VirtualZoom.shared.restore()
+        let steps = overrideSlider(for: d, native: (width, height), presetId: presetId)
+        // Default desktop ("日常") may sit on a menu-only 1× extra, so compute
+        // it from the full row list while writing only the HiDPI ladder.
+        let displaySteps = steps + (matchingPreset(for: d, native: (width, height), presetId: presetId)?.extras ?? [])
+        let ui = daily(from: displaySteps, native: (width, height))
         try OverrideFile.write(
             vendor: d.vendor,
             product: d.product,
             native: (width, height),
             slider: steps.map { ($0.w, $0.h) },
-            defaultUI: ui
+            // `default-resolution` caps the mode list macOS rebuilds on a
+            // reconnect: pointing it at a smaller "daily" size makes every
+            // larger mode vanish (observed on this pane). Keep it native.
+            defaultUI: (width, height)
         )
         let defaults = UserDefaults.standard
         defaults.set(width, forKey: nativeWKey + d.key)
@@ -205,10 +225,11 @@ enum DisplayControl {
         }
     }
 
-    static func apply(looksLike: (w: Int, h: Int)) throws {
+    static func apply(looksLike: (w: Int, h: Int), hiDPI: Bool? = nil) throws {
         try PhoneRemote.shared.restore()
+        try VirtualZoom.shared.restore()
         guard let display = mainExternalDisplay() else { throw DisplayError.noDisplay }
-        guard let mode = findMode(display: display, pointsW: looksLike.w, pointsH: looksLike.h) else {
+        guard let mode = findMode(display: display, pointsW: looksLike.w, pointsH: looksLike.h, hiDPI: hiDPI) else {
             throw DisplayError.noMode(looksLike.w, looksLike.h)
         }
         var config: CGDisplayConfigRef?
@@ -224,20 +245,60 @@ enum DisplayControl {
         if let d = activeDisplay() {
             UserDefaults.standard.set(looksLike.w, forKey: uiWKey + d.key)
             UserDefaults.standard.set(looksLike.h, forKey: uiHKey + d.key)
+            if let hiDPI {
+                UserDefaults.standard.set(hiDPI, forKey: uiHiDPIKey + d.key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: uiHiDPIKey + d.key)
+            }
         }
         usleep(300_000)
     }
 
+    /// nil means "no explicit preference": pick whichever variant is best.
+    static func preferredHiDPI(_ d: DisplayRecord) -> Bool? {
+        guard UserDefaults.standard.object(forKey: uiHiDPIKey + d.key) != nil else { return nil }
+        return UserDefaults.standard.bool(forKey: uiHiDPIKey + d.key)
+    }
+
     static func applyIfNeeded() {
-        guard !PhoneRemote.shared.ownsConfiguration else { return }
+        guard !PhoneRemote.shared.ownsConfiguration, !VirtualZoom.shared.ownsConfiguration else { return }
         guard let d = activeDisplay() else { return }
         let snap = snapshot()
         let want = preferredUI(d)
-        let uiOK = snap?.ui.map { $0.pointsW == want.w && $0.pointsH == want.h } ?? false
+        let wantHiDPI = preferredHiDPI(d)
+        let uiOK = snap?.ui.map {
+            $0.pointsW == want.w && $0.pointsH == want.h
+                && (wantHiDPI == nil || $0.hidpi == wantHiDPI!)
+        } ?? false
         if snap?.healthy == true, uiOK { return }
         let configured = UserDefaults.standard.object(forKey: nativeWKey + d.key) != nil
         if !configured, snap?.healthy == true { return }
-        try? apply(looksLike: want)
+        try? apply(looksLike: want, hiDPI: wantHiDPI)
+    }
+
+    /// The preset whose size matches this display, if any.
+    static func matchingPreset(
+        for d: DisplayRecord,
+        native: (w: Int, h: Int),
+        presetId: String?
+    ) -> NativePreset? {
+        guard let presetId,
+              let preset = PresetBank.presets(vendor: d.vendor, product: d.product)
+                  .first(where: { $0.id == presetId }),
+              preset.width == native.w, preset.height == native.h
+        else { return nil }
+        return preset
+    }
+
+    /// What gets written into the override: HiDPI scale-resolutions only.
+    /// Menu-only extras never reach this list.
+    static func overrideSlider(
+        for d: DisplayRecord,
+        native: (w: Int, h: Int),
+        presetId: String?
+    ) -> [(w: Int, h: Int, label: String)] {
+        matchingPreset(for: d, native: native, presetId: presetId)?.resolvedSlider
+            ?? Ladder.hidpi(nativeW: native.w, nativeH: native.h)
     }
 
     static func slider(
@@ -246,15 +307,13 @@ enum DisplayControl {
         presetId: String?,
         availableLooksLike: Set<String>? = nil
     ) -> [(w: Int, h: Int, label: String)] {
-        let proposed: [(w: Int, h: Int, label: String)]
-        if let presetId,
-           let preset = PresetBank.presets(vendor: d.vendor, product: d.product).first(where: { $0.id == presetId }),
-           preset.width == native.w, preset.height == native.h
-        {
-            proposed = preset.resolvedSlider
-        } else {
-            proposed = Ladder.hidpi(nativeW: native.w, nativeH: native.h)
+        var proposed = overrideSlider(for: d, native: native, presetId: presetId)
+        if let preset = matchingPreset(for: d, native: native, presetId: presetId) {
+            proposed += preset.extras
         }
+        // Keep rows ordered by canvas size: ladder first, extras merged in by
+        // area, so a 1× size sits where it belongs instead of at the bottom.
+        proposed.sort { $0.w * $0.h < $1.w * $1.h }
         guard let availableLooksLike else { return proposed }
         var compatible = proposed.filter { availableLooksLike.contains("\($0.w)x\($0.h)") }
         guard !compatible.isEmpty, !compatible.contains(where: { $0.label == "日常" }) else {
@@ -280,6 +339,7 @@ enum DisplayControl {
 
     static func mainExternalDisplay() -> CGDirectDisplayID? {
         if let normal = PhoneRemote.shared.normalDisplayID { return normal }
+        if let normal = VirtualZoom.shared.normalDisplayID { return normal }
         var n: UInt32 = 0
         CGGetOnlineDisplayList(16, nil, &n)
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
@@ -296,7 +356,9 @@ enum DisplayControl {
     }
 
     static func availableLooksLike() -> Set<String> {
-        PhoneRemote.shared.normalAvailableLooksLike ?? availableLooksLike(display: mainExternalDisplay())
+        PhoneRemote.shared.normalAvailableLooksLike
+            ?? VirtualZoom.shared.normalAvailableLooksLike
+            ?? availableLooksLike(display: mainExternalDisplay())
     }
 
     static func availableLooksLike(display: CGDirectDisplayID?) -> Set<String> {
@@ -306,15 +368,41 @@ enum DisplayControl {
         return Set(all.map { "\(Int($0.width))x\(Int($0.height))" })
     }
 
-    static func findMode(display: CGDirectDisplayID, pointsW: Int, pointsH: Int) -> UIMode? {
+    /// Every mode macOS exposes for one "looks like" size, best first:
+    /// HiDPI before 1×, then the largest backing store, then the highest Hz.
+    static func candidateModes(display: CGDirectDisplayID, pointsW: Int, pointsH: Int) -> [UIMode] {
         let opts = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue!] as CFDictionary
-        guard let all = CGDisplayCopyAllDisplayModes(display, opts) as? [CGDisplayMode] else { return nil }
-        let scored = all.map(describe).filter { $0.pointsW == pointsW && $0.pointsH == pointsH }
-        return scored.max {
-            let l = ($0.hidpi ? 1 : 0, $0.pixelsW * $0.pixelsH, Int($0.hz))
-            let r = ($1.hidpi ? 1 : 0, $1.pixelsW * $1.pixelsH, Int($1.hz))
-            return l < r
-        }
+        guard let all = CGDisplayCopyAllDisplayModes(display, opts) as? [CGDisplayMode] else { return [] }
+        return all.map(describe)
+            .filter { $0.pointsW == pointsW && $0.pointsH == pointsH }
+            .sorted {
+                let l = ($0.hidpi ? 1 : 0, $0.pixelsW * $0.pixelsH, Int($0.hz))
+                let r = ($1.hidpi ? 1 : 0, $1.pixelsW * $1.pixelsH, Int($1.hz))
+                return l > r
+            }
+    }
+
+    /// The 1× and 2× variants that actually exist for one size. Either may be
+    /// nil: a panel can offer 1920×2160 natively and nothing doubled.
+    static func variants(
+        display: CGDirectDisplayID?,
+        pointsW: Int,
+        pointsH: Int
+    ) -> (lo: UIMode?, hi: UIMode?) {
+        guard let display else { return (nil, nil) }
+        let modes = candidateModes(display: display, pointsW: pointsW, pointsH: pointsH)
+        return (modes.first { !$0.hidpi }, modes.first { $0.hidpi })
+    }
+
+    static func findMode(
+        display: CGDirectDisplayID,
+        pointsW: Int,
+        pointsH: Int,
+        hiDPI: Bool? = nil
+    ) -> UIMode? {
+        let modes = candidateModes(display: display, pointsW: pointsW, pointsH: pointsH)
+        guard let hiDPI else { return modes.first }
+        return modes.first { $0.hidpi == hiDPI }
     }
 
     static func describe(_ mode: CGDisplayMode) -> UIMode {

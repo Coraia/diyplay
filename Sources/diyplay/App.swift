@@ -128,6 +128,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(disabled(headerTitle(snap)))
         menu.addItem(disabled("识别  \(snap.display.sizeText)    物理  \(snap.native.w)×\(snap.native.h)"))
+        if let ui = snap.ui {
+            menu.addItem(disabled("当前  \(ui.pointsW)×\(ui.pointsH)  ·  \(ui.detail)"))
+        }
         menu.addItem(.separator())
 
         menu.addItem(disabled("物理分辨率"))
@@ -218,18 +221,65 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         phoneRemote.toolTip = "适合 iPhone 15 / Xiaomi 14 竖屏查看；选择下方任一分辨率可返回普通桌面。"
         items.append(phoneRemote)
 
-        for step in snap.slider {
+        for zoom in VirtualZoom.presets
+        where zoom.w <= snap.native.w && zoom.h <= snap.native.h {
             let item = NSMenuItem(
-                title: "\(step.label)    \(step.w)×\(step.h)",
-                action: #selector(pick(_:)),
+                title: "\(zoom.w)×\(zoom.h)  ·  HiDPI（虚拟屏）",
+                action: #selector(pickVirtual(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = "\(step.w)x\(step.h)"
-            if !PhoneRemote.shared.isActive, snap.ui?.pointsW == step.w, snap.ui?.pointsH == step.h {
-                item.state = .on
-            }
+            item.representedObject = "\(zoom.w)x\(zoom.h)"
+            item.toolTip = "以 \(zoom.w * 2)×\(zoom.h * 2) 渲染后镜像缩放到面板；面板本身给不出这一档 HiDPI。"
+            if VirtualZoom.shared.active == zoom { item.state = .on }
             items.append(item)
+        }
+
+        // While mirroring, the pane has no desktop of its own and its mode
+        // table mirrors the virtual display, so the physical ladder is
+        // meaningless: offer the way out instead.
+        if VirtualZoom.shared.isActive {
+            let exit = NSMenuItem(
+                title: "退出虚拟屏（回到 \(snap.native.w)×\(snap.native.h)）",
+                action: #selector(exitVirtual),
+                keyEquivalent: ""
+            )
+            exit.target = self
+            items.append(exit)
+            return items
+        }
+
+        for step in snap.slider {
+            let variants = DisplayControl.variants(
+                display: DisplayControl.mainExternalDisplay(),
+                pointsW: step.w,
+                pointsH: step.h
+            )
+            var rows: [(mode: UIMode?, suffix: String, flag: String)] = []
+            if let hi = variants.hi { rows.append((hi, hi.scaleText, "hi")) }
+            if let lo = variants.lo { rows.append((lo, "1×", "lo")) }
+            if rows.isEmpty { rows.append((nil, "", "any")) }
+            for row in rows {
+                let suffix = row.suffix.isEmpty ? "" : "  ·  \(row.suffix)"
+                let item = NSMenuItem(
+                    title: "\(step.label)    \(step.w)×\(step.h)\(suffix)",
+                    action: #selector(pick(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = "\(step.w)x\(step.h)@\(row.flag)"
+                item.toolTip = row.mode.map { mode in
+                    mode.hidpi
+                        ? "后台渲染 \(mode.pixelsW)×\(mode.pixelsH)，再缩放到面板像素。"
+                        : "像素与面板 1:1，最锐利，但没有 2× 抗锯齿。"
+                }
+                if !PhoneRemote.shared.isActive,
+                   let ui = snap.ui, ui.pointsW == step.w, ui.pointsH == step.h,
+                   row.mode == nil || ui.hidpi == (row.mode?.hidpi ?? ui.hidpi) {
+                    item.state = .on
+                }
+                items.append(item)
+            }
         }
         return items
     }
@@ -247,7 +297,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateResolutionPanel() {
         let snap = DisplayControl.snapshot()
-        let current = snap?.ui.map { "当前 \($0.pointsW)×\($0.pointsH)" } ?? "当前分辨率不可用"
+        let current = snap?.ui.map { "当前 \($0.pointsW)×\($0.pointsH) · \($0.scaleText)" } ?? "当前分辨率不可用"
         resolutionPanel?.update(
             status: snap.map { "\($0.display.name) · \(current)" } ?? "没有显示器",
             items: snap.map(resolutionItems) ?? [],
@@ -258,6 +308,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func headerTitle(_ snap: Snapshot) -> String {
         if PhoneRemote.shared.isActive {
             return "\(snap.display.name)  ·  手机远程"
+        }
+        if let zoom = VirtualZoom.shared.active {
+            return "\(snap.display.name)  ·  虚拟屏 \(zoom.title)"
         }
         if snap.healthy {
             return "\(snap.display.name)  ·  正常"
@@ -317,10 +370,38 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func pick(_ sender: NSMenuItem) {
         guard let spec = sender.representedObject as? String else { return }
+        let pieces = spec.split(separator: "@")
+        let parts = pieces[0].split(separator: "x")
+        guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) else { return }
+        let flag = pieces.count > 1 ? String(pieces[1]) : "any"
+        let hiDPI: Bool? = flag == "hi" ? true : (flag == "lo" ? false : nil)
+        do {
+            try DisplayControl.apply(looksLike: (w, h), hiDPI: hiDPI)
+        } catch {
+            alert(error.localizedDescription)
+        }
+        refreshIcon()
+    }
+
+    @objc private func pickVirtual(_ sender: NSMenuItem) {
+        guard let spec = sender.representedObject as? String else { return }
         let parts = spec.split(separator: "x")
         guard parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) else { return }
         do {
-            try DisplayControl.apply(looksLike: (w, h))
+            try VirtualZoom.shared.enable(VirtualZoom.Preset(w: w, h: h))
+        } catch {
+            alert(error.localizedDescription)
+        }
+        refreshIcon()
+    }
+
+    @objc private func exitVirtual() {
+        do {
+            try VirtualZoom.shared.restore()
+            if let d = DisplayControl.activeDisplay() {
+                try DisplayControl.apply(looksLike: DisplayControl.preferredUI(d),
+                                         hiDPI: DisplayControl.preferredHiDPI(d))
+            }
         } catch {
             alert(error.localizedDescription)
         }
@@ -329,6 +410,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func pickPhoneRemote() {
         do {
+            if VirtualZoom.shared.isActive { try VirtualZoom.shared.restore() }
             try PhoneRemote.shared.enable()
         } catch {
             alert(error.localizedDescription)
