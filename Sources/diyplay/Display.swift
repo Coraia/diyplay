@@ -201,7 +201,11 @@ enum DisplayControl {
         // Default desktop ("日常") may sit on a menu-only 1× extra, so compute
         // it from the full row list while writing only the HiDPI ladder.
         let displaySteps = steps + (matchingPreset(for: d, native: (width, height), presetId: presetId)?.extras ?? [])
-        let ui = daily(from: displaySteps, native: (width, height))
+        // Prefer the size the user last chose while on this preset, then the
+        // computed "日常", so switching PBP layouts restores a familiar size
+        // instead of always dropping back to a default.
+        let ui = rememberedUI(for: d, presetId: presetId)
+            ?? daily(from: displaySteps, native: (width, height))
         try OverrideFile.write(
             vendor: d.vendor,
             product: d.product,
@@ -218,11 +222,38 @@ enum DisplayControl {
         defaults.set(presetId, forKey: presetKey + d.key)
         defaults.set(ui.w, forKey: uiWKey + d.key)
         defaults.set(ui.h, forKey: uiHKey + d.key)
+        var applied = ui
         do {
             try apply(looksLike: ui)
         } catch DisplayError.noMode {
-            throw DisplayError.noMode(ui.w, ui.h)
+            // The preferred / "日常" size may not be in the freshly rebuilt
+            // mode table yet (e.g. 3072×1728 on this 4K pane). Fall back to the
+            // guaranteed 1× native size instead of leaving the old resolution.
+            applied = (width, height)
+            do {
+                try apply(looksLike: applied, hiDPI: false)
+            } catch {
+                throw DisplayError.noMode(ui.w, ui.h)
+            }
         }
+        // Persist what actually stuck so the next PBP switch restores it.
+        rememberUI(applied, for: d, presetId: presetId)
+    }
+
+    /// Remember the last "looks like" size the user picked for one preset, so a
+    /// later PBP/OSD switch can restore it instead of recomputing a default.
+    static func rememberedUI(for d: DisplayRecord, presetId: String?) -> (w: Int, h: Int)? {
+        guard let presetId else { return nil }
+        let w = UserDefaults.standard.integer(forKey: uiWKey + "\(d.key).\(presetId)")
+        let h = UserDefaults.standard.integer(forKey: uiHKey + "\(d.key).\(presetId)")
+        guard w >= 640, h >= 480 else { return nil }
+        return (w, h)
+    }
+
+    static func rememberUI(_ size: (w: Int, h: Int), for d: DisplayRecord, presetId: String?) {
+        guard let presetId else { return }
+        UserDefaults.standard.set(size.w, forKey: uiWKey + "\(d.key).\(presetId)")
+        UserDefaults.standard.set(size.h, forKey: uiHKey + "\(d.key).\(presetId)")
     }
 
     static func apply(looksLike: (w: Int, h: Int), hiDPI: Bool? = nil) throws {
@@ -274,6 +305,58 @@ enum DisplayControl {
         let configured = UserDefaults.standard.object(forKey: nativeWKey + d.key) != nil
         if !configured, snap?.healthy == true { return }
         try? apply(looksLike: want, hiDPI: wantHiDPI)
+    }
+
+    /// A monitor's PBP / OSD layout can change which pixels a pane exposes while
+    /// keeping the same vendor/product, so `applyIfNeeded` alone keeps replaying
+    /// the old pane's preset. When macOS starts reporting a size that exactly
+    /// matches one of our managed presets (32C1U Phone / 对半 / 整屏), switch to
+    /// that preset automatically. Custom physical sizes and generic monitors are
+    /// left untouched: rewriting them here would undo a deliberate EDID override.
+    /// Returns true when it changed the physical preset.
+    @discardableResult
+    static func reconcilePane() -> Bool {
+        // Never fight an in-flight switch of our own.
+        guard !PhoneRemote.shared.isChanging, !VirtualZoom.shared.isChanging else { return false }
+        guard let d = activeDisplay() else { return false }
+        let detected = (w: d.pixelsW, h: d.pixelsH)
+        guard detected.w > 0, detected.h > 0 else { return false }
+        let stored = selectedNative(d)
+        guard detected.w != stored.w || detected.h != stored.h else { return false }
+        guard let preset = panePreset(vendor: d.vendor, product: d.product, detected: detected) else { return false }
+        // Only move between presets The tool manages; if the stored size is a
+        // custom crop (no preset), do not silently replace it with the detected
+        // size — that is exactly the "EDID lies, user chose smaller" case.
+        guard let storedPreset = resolvedPreset(d), storedPreset.id != preset.id else { return false }
+        // A temporary virtual/phone desktop may currently own the pane. If the
+        // OSD changed underneath it, the saved mirror targets no longer describe
+        // this pane: tear it down, then adopt the new physical preset.
+        if PhoneRemote.shared.ownsConfiguration {
+            do { try PhoneRemote.shared.restore() } catch { return false }
+        }
+        if VirtualZoom.shared.ownsConfiguration {
+            do { try VirtualZoom.shared.restore() } catch { return false }
+        }
+        do {
+            try adoptPane(d, preset: preset)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// The known preset whose physical size exactly matches the pane macOS now
+    /// reports, or nil when the display has no preset for that size.
+    static func panePreset(vendor: Int, product: Int, detected: (w: Int, h: Int)) -> NativePreset? {
+        PresetBank.presets(vendor: vendor, product: product)
+            .first { $0.width == detected.w && $0.height == detected.h }
+    }
+
+    /// Write the override for the newly detected pane and apply a usable mode.
+    /// `setNative` already prefers the remembered size, then "日常", then the
+    /// guaranteed 1× native mode, so this is a thin wrapper for readability.
+    static func adoptPane(_ d: DisplayRecord, preset: NativePreset) throws {
+        try setNative(d, width: d.pixelsW, height: d.pixelsH, presetId: preset.id)
     }
 
     /// The preset whose size matches this display, if any.

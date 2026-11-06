@@ -11,7 +11,12 @@ private func diyplayOnReconfigure(
     let interesting: UInt32 = 0x0000_0001 | 0x0000_0010 | 0x0000_0008 | 0x0000_1000
     guard flags.rawValue & interesting != 0 else { return }
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-        DisplayControl.applyIfNeeded()
+        // First see whether the monitor's PBP/OSD layout changed the pane size
+        // underneath us; only fall back to replaying the stored preference when
+        // no managed preset fits the new size.
+        if !DisplayControl.reconcilePane() {
+            DisplayControl.applyIfNeeded()
+        }
         MenuBarApp.shared.refreshIcon()
     }
 }
@@ -68,7 +73,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         statusItem = item
         RemoteCompanion.shared.start { [weak self] in self?.showCompanionPrompt() }
-        DisplayControl.applyIfNeeded()
+        if !DisplayControl.reconcilePane() {
+            DisplayControl.applyIfNeeded()
+        }
         refreshIcon()
     }
 
@@ -377,6 +384,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let hiDPI: Bool? = flag == "hi" ? true : (flag == "lo" ? false : nil)
         do {
             try DisplayControl.apply(looksLike: (w, h), hiDPI: hiDPI)
+            // Remember this choice for the current preset so a later PBP/OSD
+            // switch restores the same familiar size automatically.
+            if let d = DisplayControl.activeDisplay() {
+                DisplayControl.rememberUI((w, h), for: d, presetId: DisplayControl.resolvedPreset(d)?.id)
+            }
         } catch {
             alert(error.localizedDescription)
         }
@@ -431,6 +443,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func switchToPhoneFromCompanion() {
         do {
+            if VirtualZoom.shared.isActive { try VirtualZoom.shared.restore() }
             try PhoneRemote.shared.enable()
         } catch {
             alert(error.localizedDescription)
@@ -449,6 +462,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         do {
+            if VirtualZoom.shared.isActive { try VirtualZoom.shared.restore() }
             try PhoneRemote.shared.enable()
         } catch {
             alert(error.localizedDescription)
